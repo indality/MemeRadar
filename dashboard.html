@@ -156,7 +156,7 @@
       <tr>
         <th data-key="symbol">Symbol</th>
         <th>CA</th>
-        <th data-key="price_usd" class="num">Cena $</th>
+        <th data-key="market_cap_usd" class="num">Market Cap</th>
         <th data-key="liquidity_usd" class="num">Likviditāte $</th>
         <th data-key="volume_24h_usd" class="num">Apjoms 24h $</th>
         <th data-key="price_change_24h_pct" class="num">24h %</th>
@@ -203,6 +203,15 @@ async function loadData() {
 function fmt(n, decimals = 0) {
   if (n === null || n === undefined || isNaN(n)) return '—';
   return Number(n).toLocaleString('en-US', { maximumFractionDigits: decimals, minimumFractionDigits: 0 });
+}
+
+function fmtCompact(n) {
+  if (n === null || n === undefined || isNaN(n)) return '—';
+  n = Number(n);
+  if (n >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'K';
+  return '$' + n.toFixed(0);
 }
 
 function shortAddr(addr) {
@@ -291,7 +300,7 @@ function render() {
     return `<tr>
       <td class="sym">${r.symbol || '?'}</td>
       <td>${caCell(r.address)}</td>
-      <td class="num">${r.price_usd ? Number(r.price_usd).toFixed(8) : '—'}</td>
+      <td class="num" title="${r.price_usd ? 'Cena: $' + Number(r.price_usd).toFixed(8) : ''}">${fmtCompact(r.market_cap_usd)}</td>
       <td class="num">$${fmt(r.liquidity_usd)}</td>
       <td class="num">$${fmt(r.volume_24h_usd)}</td>
       <td class="num ${chgClass}">${chg !== undefined && chg !== null ? chg.toFixed(1) + '%' : '—'}</td>
