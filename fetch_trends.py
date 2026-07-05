@@ -198,6 +198,10 @@ def normalize_dexscreener_pair(pair):
     price_change_24h = (pair.get("priceChange") or {}).get("h24")
     created_ms = pair.get("pairCreatedAt")
     age_hours = (time.time() * 1000 - created_ms) / 1000 / 3600 if created_ms else None
+    # marketCap = circulating supply value; fdv = fully diluted value (all supply).
+    # For pump.fun-style tokens nearly all supply is usually already circulating,
+    # so the two are close, but we prefer marketCap when DexScreener provides it.
+    market_cap = pair.get("marketCap") or pair.get("fdv")
 
     return {
         "source": "dexscreener",
@@ -205,6 +209,7 @@ def normalize_dexscreener_pair(pair):
         "name": (pair.get("baseToken") or {}).get("name"),
         "address": (pair.get("baseToken") or {}).get("address"),
         "price_usd": pair.get("priceUsd"),
+        "market_cap_usd": market_cap,
         "liquidity_usd": liq,
         "volume_24h_usd": vol24,
         "price_change_24h_pct": price_change_24h,
@@ -242,16 +247,25 @@ def build_report():
     rows = []
 
     # --- pump.fun sources ---
-    for coin in fetch_pump_new_coins(limit=50):
+    pump_coins = fetch_pump_new_coins(limit=50)
+    print(f"[debug] pump.fun /coins returned {len(pump_coins)} coins")
+
+    pump_with_address = 0
+    pump_with_dex_pair = 0
+    for coin in pump_coins:
         n = normalize_pump_coin(coin)
         if n["address"]:
+            pump_with_address += 1
             pair = fetch_dexscreener_pair(n["address"])
             if pair:
+                pump_with_dex_pair += 1
                 merged = normalize_dexscreener_pair(pair)
                 merged["source"] = "pump.fun+dexscreener"
                 merged["pump_market_cap_usd"] = n["market_cap_usd"]
                 merged["pump_reply_count"] = n["reply_count"]
                 rows.append(merged)
+    print(f"[debug] pump.fun coins with address: {pump_with_address}, "
+          f"found on dexscreener: {pump_with_dex_pair}")
 
     for coin in fetch_pump_king_of_the_hill():
         n = normalize_pump_coin(coin)
@@ -263,7 +277,9 @@ def build_report():
                 rows.append(merged)
 
     # --- dexscreener boosted (promoted) tokens ---
-    for boost in fetch_dexscreener_boosted():
+    boosted = fetch_dexscreener_boosted()
+    print(f"[debug] dexscreener boosted (solana): {len(boosted)}")
+    for boost in boosted:
         addr = boost.get("tokenAddress")
         if addr and not any(r["address"] == addr for r in rows):
             pair = fetch_dexscreener_pair(addr)
@@ -272,8 +288,13 @@ def build_report():
                 merged["source"] = "dexscreener-boosted"
                 rows.append(merged)
 
+    print(f"[debug] total merged rows before scoring: {len(rows)}")
+
     for r in rows:
         r["score"] = score_token(r)
+
+    scored_zero = sum(1 for r in rows if not r["score"])
+    print(f"[debug] rows filtered out by score (liquidity/volume/age thresholds): {scored_zero}")
 
     rows = [r for r in rows if r["score"] and r["score"] > 0]
     rows.sort(key=lambda r: r["score"], reverse=True)
@@ -296,14 +317,14 @@ def save_outputs(rows):
     with open(csv_path, "a", newline="") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["timestamp", "symbol", "address", "source", "price_usd",
+            writer.writerow(["timestamp", "symbol", "address", "source", "market_cap_usd", "price_usd",
                               "liquidity_usd", "volume_24h_usd", "price_change_24h_pct",
                               "created_age_hours", "score", "risk_score", "risk_label",
                               "mint_authority_renounced", "freeze_authority_renounced",
                               "lp_locked_pct", "holder_count", "top10_holder_pct"])
         for r in rows:
             writer.writerow([timestamp, r.get("symbol"), r.get("address"), r.get("source"),
-                              r.get("price_usd"), r.get("liquidity_usd"), r.get("volume_24h_usd"),
+                              r.get("market_cap_usd"), r.get("price_usd"), r.get("liquidity_usd"), r.get("volume_24h_usd"),
                               r.get("price_change_24h_pct"), r.get("created_age_hours"), r.get("score"),
                               r.get("risk_score"), r.get("risk_label"),
                               r.get("mint_authority_renounced"), r.get("freeze_authority_renounced"),
@@ -317,7 +338,7 @@ def print_table(rows, limit=20):
     if RICH_AVAILABLE:
         table = Table(title="Top trending candidates (heuristic score, NOT financial advice)")
         table.add_column("Symbol")
-        table.add_column("Price $")
+        table.add_column("Market Cap $")
         table.add_column("Liquidity $")
         table.add_column("Vol 24h $")
         table.add_column("24h %")
@@ -334,7 +355,7 @@ def print_table(rows, limit=20):
                 risk_str = f"{r.get('risk_score')} (mint:{mint_ok})"
             table.add_row(
                 str(r.get("symbol")),
-                f"{float(r.get('price_usd') or 0):.8f}",
+                f"{r.get('market_cap_usd') or 0:,.0f}",
                 f"{r.get('liquidity_usd') or 0:,.0f}",
                 f"{r.get('volume_24h_usd') or 0:,.0f}",
                 f"{r.get('price_change_24h_pct') or 0:.1f}%",
