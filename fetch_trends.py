@@ -117,12 +117,17 @@ def fetch_dexscreener_pair(token_address):
 
 def fetch_rugcheck_report(token_address):
     """
-    Pull RugCheck's risk summary for a token: LP lock status, mint/freeze
+    Pull RugCheck's full risk report for a token: LP lock status, mint/freeze
     authority, top holder concentration, and their overall risk label.
+
+    NOTE: we use the full `/report` endpoint (not `/report/summary`) because
+    the summary endpoint omits `markets` (LP lock data) and `topHolders`
+    (concentration data) entirely - confirmed by inspecting a live response.
+
     Docs: https://api.rugcheck.xyz/swagger/index.html
     Returns None if the token hasn't been indexed yet or the request fails.
     """
-    data = safe_get(f"{RUGCHECK_BASE}/tokens/{token_address}/report/summary")
+    data = safe_get(f"{RUGCHECK_BASE}/tokens/{token_address}/report")
     if not data:
         return None
 
@@ -137,10 +142,15 @@ def fetch_rugcheck_report(token_address):
         if lp_pcts:
             lp_locked_pct = max(lp_pcts)
 
+    risks = data.get("risks") or []
+
     return {
-        "risk_score": data.get("score"),                 # higher = riskier, per RugCheck
-        "risk_label": data.get("scoreNormalised") or data.get("risks", [{}])[0].get("level") if data.get("risks") else None,
-        "risks_detail": [r.get("name") for r in (data.get("risks") or [])],
+        # score_normalised is RugCheck's 0-100 scale (higher = riskier).
+        # Plain `score` is an unbounded raw score and not comparable across tokens.
+        "risk_score": data.get("score_normalised"),
+        "risk_score_raw": data.get("score"),
+        "risk_label": risks[0].get("level") if risks else None,
+        "risks_detail": [r.get("name") for r in risks],
         "mint_authority_renounced": data.get("mintAuthority") is None,
         "freeze_authority_renounced": data.get("freezeAuthority") is None,
         "lp_locked_pct": lp_locked_pct,
