@@ -132,7 +132,19 @@ def fetch_rugcheck_report(token_address):
         return None
 
     top_holders = data.get("topHolders") or []
-    top10_pct = sum((h.get("pct") or 0) for h in top_holders[:10]) if top_holders else None
+    # Some RugCheck entries list the same owner more than once (e.g. separate
+    # token accounts for the same wallet), which can push a naive sum over
+    # 100%. Deduplicate by address first, then take the true top 10.
+    unique_holders = {}
+    for h in top_holders:
+        addr = h.get("address") or h.get("owner")
+        pct = h.get("pct") or 0
+        if addr and pct > unique_holders.get(addr, 0):
+            unique_holders[addr] = pct
+    top10_vals = sorted(unique_holders.values(), reverse=True)[:10]
+    top10_pct = sum(top10_vals) if top10_vals else None
+    if top10_pct is not None:
+        top10_pct = min(top10_pct, 100)  # safety clamp, holdings can't exceed total supply
 
     lp_locked_pct = None
     markets = data.get("markets") or []
